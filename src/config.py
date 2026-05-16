@@ -1,70 +1,74 @@
 """Configuration management for MCP Web Performance Intelligence."""
 
 import os
-from dataclasses import dataclass
 from typing import Optional
 
 
-@dataclass
-class APIConfig:
-    """API configuration settings."""
-    google_api_key: str
-    pagespeed_api_key: str
-    pagespeed_endpoint: str = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
-    request_timeout: float = 60.0
-    max_retries: int = 3
-    retry_delay_seconds: int = 40
-
-
-@dataclass
-class DatabaseConfig:
-    """Database configuration settings."""
-    db_file: str = "mcp_performance.db"
-    connection_timeout: float = 30.0
-    enable_wal: bool = True
-
-
-@dataclass
-class ModelConfig:
-    """Generative AI model configuration."""
-    model_name: str = "gemini-2.5-flash-lite"
-    system_instruction: str = (
-        "You are a Senior Performance Engineer. Use your tools to perform a comprehensive audit: "
-        "1. Analyze website speed using 'analyze_website'. "
-        "2. Immediately follow up with 'suggest_improvements' for that same URL. "
-        "3. Provide a high-detail technical report including raw JSON metrics in a code block."
-    )
-    temperature: float = 0.7
-    max_output_tokens: int = 2048
-
-
-@dataclass
 class Config:
-    """Master configuration container."""
-    api: APIConfig
-    database: DatabaseConfig
-    model: ModelConfig
+    """Central configuration object."""
+
+    # API Keys
+    GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
+    PAGESPEED_API_KEY: str = os.getenv("PAGESPEED_API_KEY", "")
+
+    # Model Configuration
+    MODEL_NAME: str = os.getenv("MODEL_NAME", "gemini-2.5-flash-lite")
+    TIMEOUT_SECONDS: int = int(os.getenv("TIMEOUT_SECONDS", "60"))
+
+    # Database Configuration
+    DB_FILE: str = os.getenv("DB_FILE", "mcp_performance.db")
+    DB_TIMEOUT: int = int(os.getenv("DB_TIMEOUT", "30"))
+
+    # Logging Configuration
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    LOG_FILE: Optional[str] = os.getenv("LOG_FILE")
+
+    # Performance Thresholds
+    PERFORMANCE_SCORE_THRESHOLD: float = 70.0
+    FCP_THRESHOLD_MS: float = 1800.0  # milliseconds
+    TTI_THRESHOLD_MS: float = 3800.0  # milliseconds
+    TBT_THRESHOLD_MS: float = 300.0   # milliseconds
+
+    # API Configuration
+    PAGESPEED_API_URL: str = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+    PAGESPEED_API_TIMEOUT: float = 60.0
+    MAX_RETRIES: int = 3
+    RETRY_BACKOFF_FACTOR: int = 40  # seconds
 
     @classmethod
-    def from_env(cls) -> "Config":
-        """Load configuration from environment variables."""
-        return cls(
-            api=APIConfig(
-                google_api_key=os.getenv("GOOGLE_API_KEY", ""),
-                pagespeed_api_key=os.getenv("PAGESPEED_API_KEY", ""),
-            ),
-            database=DatabaseConfig(
-                db_file=os.getenv("DB_FILE", "mcp_performance.db"),
-            ),
-            model=ModelConfig(
-                model_name=os.getenv("MODEL_NAME", "gemini-2.5-flash-lite"),
-            ),
-        )
+    def validate(cls) -> None:
+        """Validate critical configuration parameters."""
+        if not cls.GOOGLE_API_KEY:
+            raise ValueError("GOOGLE_API_KEY environment variable is required")
+        if not cls.PAGESPEED_API_KEY:
+            raise ValueError("PAGESPEED_API_KEY environment variable is required")
 
-    def validate(self) -> bool:
-        """Validate configuration completeness."""
-        if not self.api.google_api_key:
-            raise ValueError("GOOGLE_API_KEY is required")
-        if not self.api.pagespeed_api_key:
-            raise ValueError("PAGESPEED_API_KEY is required")
-        return True
+
+class DevelopmentConfig(Config):
+    """Development environment configuration."""
+
+    DEBUG: bool = True
+    LOG_LEVEL: str = "DEBUG"
+    DB_FILE: str = "dev_mcp_performance.db"
+
+
+class ProductionConfig(Config):
+    """Production environment configuration."""
+
+    DEBUG: bool = False
+    LOG_LEVEL: str = "WARNING"
+    DB_FILE: str = "/var/data/mcp_performance.db"
+
+
+def get_config(environment: str = "development") -> Config:
+    """Factory function to retrieve appropriate configuration.
+
+    Args:
+        environment: Either "development" or "production"
+
+    Returns:
+        Config object with appropriate settings
+    """
+    if environment.lower() == "production":
+        return ProductionConfig()
+    return DevelopmentConfig()

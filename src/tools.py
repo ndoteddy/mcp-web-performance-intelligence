@@ -1,170 +1,171 @@
-"""FastMCP tool definitions for agentic performance analysis."""
+"""FastMCP tool definitions for agentic workflow."""
 
 import logging
-from typing import Dict, Any
-
+from typing import Dict, Any, Optional
 from fastmcp import FastMCP
+
 from src.analyzer import PerformanceAnalyzer
 from src.database import PerformanceDatabase
 from src.config import Config
 
 logger = logging.getLogger(__name__)
 
+# Initialize tools
+mcp = FastMCP("WebPerformanceAnalyzer")
+analyzer = PerformanceAnalyzer()
+db = PerformanceDatabase()
 
-class PerformanceTools:
-    """Encapsulates FastMCP tool definitions for performance analysis."""
 
-    def __init__(
-        self,
-        mcp: FastMCP,
-        analyzer: PerformanceAnalyzer,
-        database: PerformanceDatabase,
-    ):
-        """Initialize tools with dependencies.
-        
-        Args:
-            mcp: FastMCP server instance
-            analyzer: Performance analyzer instance
-            database: Database instance
-        """
-        self.mcp = mcp
-        self.analyzer = analyzer
-        self.database = database
-        self._register_tools()
+@mcp.tool()
+def analyze_website(url: str) -> str:
+    """Analyze website performance using Google PageSpeed Insights.
 
-    def _register_tools(self) -> None:
-        """Register all MCP tool handlers."""
-        
-        @self.mcp.tool()
-        def analyze_website(url: str) -> str:
-            """Analyzes website performance and returns raw JSON metrics.
-            
-            Args:
-                url: The full URL of the website to analyze
-                
-            Returns:
-                JSON string containing performance metrics
-            """
-            try:
-                metrics = self.analyzer.analyze_website(url)
-                self.database.store_metrics(url, metrics)
-                return metrics_to_json(metrics)
-            except Exception as e:
-                logger.error(f"Analysis failed for {url}: {str(e)}")
-                return error_response(f"Analysis failed: {str(e)}")
+    Fetches comprehensive performance metrics including:
+    - Performance Score (0-100)
+    - First Contentful Paint (FCP)
+    - Speed Index
+    - Largest Contentful Paint (LCP)
+    - Time to Interactive (TTI)
+    - Total Blocking Time (TBT)
+    - Cumulative Layout Shift (CLS)
 
-        @self.mcp.tool()
-        def suggest_improvements(url: str) -> str:
-            """Provides technical recommendations based on analysis.
-            
-            Args:
-                url: The full URL of the website to get suggestions for
-                
-            Returns:
-                JSON string containing improvement recommendations
-            """
-            try:
-                metrics = self.database.get_metrics(url)
-                if not metrics:
-                    return error_response(f"No cached metrics found for {url}. Run analyze_website first.")
-                
-                recommendations = self._generate_recommendations(metrics)
-                return recommendations_to_json(recommendations)
-            except Exception as e:
-                logger.error(f"Recommendation generation failed for {url}: {str(e)}")
-                return error_response(f"Recommendation failed: {str(e)}")
+    Args:
+        url: The website URL to analyze
 
-        logger.info("MCP tools registered successfully")
+    Returns:
+        JSON string containing extracted performance metrics
+    """
+    try:
+        logger.info(f"[MCP Tool] Analyzing: {url}")
+        metrics = analyzer.analyze_website(url)
 
-    def _generate_recommendations(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate improvement recommendations based on metrics.
-        
-        Args:
-            metrics: Performance metrics dictionary
-            
-        Returns:
-            Recommendations dictionary
-        """
-        score = metrics.get("score", 0)
-        recommendations = []
-        
-        if score < 50:
-            recommendations.append({
-                "priority": "Critical",
-                "area": "Overall Performance",
-                "suggestion": "Performance score is below 50. Comprehensive optimization required.",
-            })
-        
-        if "1050 ms" in str(metrics.get("total_blocking_time", "")):
-            recommendations.append({
-                "priority": "High",
-                "area": "Main Thread",
-                "suggestion": "Implement task chunking. Break long-running JavaScript into smaller async chunks using scheduler.yield() or setTimeout(0).",
-            })
-        
-        if "2.5 s" in str(metrics.get("interactive", "")):
-            recommendations.append({
-                "priority": "High",
-                "area": "Time to Interactive",
-                "suggestion": "Optimize JavaScript hydration. Consider selective hydration or Islands Architecture for modern frameworks.",
-            })
-        
-        if score < 75:
-            recommendations.append({
-                "priority": "Medium",
-                "area": "Resource Loading",
-                "suggestion": "Implement resource hints (preload, prefetch) for critical assets. Optimize image and font loading strategies.",
-            })
-        
-        if not recommendations:
-            recommendations.append({
-                "priority": "Low",
-                "area": "Maintenance",
-                "suggestion": "Performance is good. Focus on maintaining current standards and monitoring for regressions.",
-            })
-        
-        return {
-            "url": metrics.get("url"),
-            "score": score,
-            "classification": self.analyzer.classify_performance(score),
+        if not metrics:
+            return '{"error": "Failed to fetch metrics from PageSpeed API"}'
+
+        if not analyzer.validate_metrics(metrics):
+            logger.warning(f"Metrics validation failed for {url}")
+            return '{"error": "Metrics validation failed"}'
+
+        # Persist metrics to database
+        db.insert_metrics(url, metrics)
+
+        import json
+        return json.dumps(metrics)
+
+    except Exception as e:
+        logger.error(f"Error in analyze_website: {e}")
+        return f'{{"error": "{str(e)}"}}'
+
+
+@mcp.tool()
+def suggest_improvements(url: str) -> str:
+    """Generate improvement recommendations based on cached metrics.
+
+    Provides 3 actionable technical recommendations tailored to the website's
+    specific performance bottlenecks identified in the analysis.
+
+    Args:
+        url: The website URL to generate suggestions for
+
+    Returns:
+        JSON string containing prioritized improvement recommendations
+    """
+    try:
+        logger.info(f"[MCP Tool] Generating suggestions for: {url}")
+
+        # Retrieve cached metrics
+        metrics = db.get_metrics(url)
+        if not metrics:
+            return '{"error": "No cached metrics found. Run analyze_website first."}'
+
+        recommendations = _generate_recommendations(metrics)
+
+        import json
+        return json.dumps({
+            "url": url,
             "recommendations": recommendations,
-        }
+            "metrics_analyzed": {
+                "score": metrics.get("score"),
+                "status": analyzer.get_performance_status(metrics.get("score", 0))
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error in suggest_improvements: {e}")
+        return f'{{"error": "{str(e)}"}}'
 
 
-def metrics_to_json(metrics: Dict[str, Any]) -> str:
-    """Convert metrics dictionary to JSON string.
-    
+def _generate_recommendations(metrics: Dict[str, Any]) -> list:
+    """Generate prioritized recommendations based on metrics.
+
     Args:
-        metrics: Metrics dictionary
-        
+        metrics: Performance metrics dictionary
+
     Returns:
-        JSON string
+        List of recommendation dictionaries
     """
-    import json
-    return json.dumps(metrics, indent=2)
+    recommendations = []
+    score = metrics.get("score", 0)
+
+    # Priority 1: Low performance score
+    if score < Config.PERFORMANCE_SCORE_THRESHOLD:
+        recommendations.append({
+            "priority": 1,
+            "category": "Overall Performance",
+            "issue": f"Performance score is {score} (threshold: {Config.PERFORMANCE_SCORE_THRESHOLD})",
+            "recommendation": "Comprehensive performance audit required. Focus on JavaScript optimization and resource prioritization.",
+            "impact": "High"
+        })
+
+    # Priority 2: High Total Blocking Time
+    tbt_str = metrics.get("total_blocking_time", "N/A")
+    if tbt_str != "N/A" and "ms" in tbt_str:
+        try:
+            tbt_value = float(tbt_str.split()[0].replace(",", ""))
+            if tbt_value > Config.TBT_THRESHOLD_MS:
+                recommendations.append({
+                    "priority": 2,
+                    "category": "Main Thread Optimization",
+                    "issue": f"Total Blocking Time: {tbt_str}",
+                    "recommendation": "Implement task chunking using scheduler.yield(). Consider code-splitting and offloading third-party scripts to Web Workers.",
+                    "impact": "High"
+                })
+        except (ValueError, IndexError):
+            logger.warning(f"Could not parse TBT value: {tbt_str}")
+
+    # Priority 3: Slow Time to Interactive
+    tti_str = metrics.get("time_to_interactive", "N/A")
+    if tti_str != "N/A" and "s" in tti_str:
+        try:
+            tti_value = float(tti_str.split()[0]) * 1000  # Convert to ms
+            if tti_value > Config.TTI_THRESHOLD_MS:
+                recommendations.append({
+                    "priority": 3,
+                    "category": "Critical Path Optimization",
+                    "issue": f"Time to Interactive: {tti_str}",
+                    "recommendation": "Minimize critical resources. Use lazy loading for non-essential JavaScript. Consider selective hydration or Islands Architecture.",
+                    "impact": "Medium"
+                })
+        except (ValueError, IndexError):
+            logger.warning(f"Could not parse TTI value: {tti_str}")
+
+    # If no critical issues, provide general optimizations
+    if not recommendations:
+        recommendations.append({
+            "priority": 1,
+            "category": "Optimization Opportunities",
+            "issue": "Site meets performance thresholds",
+            "recommendation": "Continue monitoring performance. Implement Image optimization and Cache-Control headers. Regular performance audits recommended.",
+            "impact": "Low"
+        })
+
+    return recommendations
 
 
-def recommendations_to_json(recommendations: Dict[str, Any]) -> str:
-    """Convert recommendations to JSON string.
-    
-    Args:
-        recommendations: Recommendations dictionary
-        
+def get_mcp_tools() -> FastMCP:
+    """Export configured MCP instance with tools.
+
     Returns:
-        JSON string
+        FastMCP instance with registered tools
     """
-    import json
-    return json.dumps(recommendations, indent=2)
-
-
-def error_response(message: str) -> str:
-    """Format error response as JSON.
-    
-    Args:
-        message: Error message
-        
-    Returns:
-        JSON error string
-    """
-    import json
-    return json.dumps({"error": message})
+    return mcp
