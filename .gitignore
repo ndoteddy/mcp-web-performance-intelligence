@@ -1,0 +1,24 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Database artifacts
+*.db
+*.db-shm
+*.db-wal
+
+# Secrets / local config
+appsettings.*.local.json
+.env
+
+# Python / notebook artifacts
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db

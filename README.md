@@ -1,182 +1,189 @@
 # MCP Web Performance Intelligence
 
-Enterprise-grade Agentic AI observability platform built with FastMCP, SQLite, and PageSpeed Insights for autonomous website diagnostics, persistent context management, intelligent tool orchestration, and AI-driven remediation recommendations.
+A .NET 10 **Model Context Protocol (MCP) server** that audits website performance via
+Google PageSpeed Insights, caches results in SQLite, and generates prioritized
+remediation recommendations — exposed as standard MCP tools any MCP client (Claude
+Desktop, an IDE, a custom agent) can call.
 
 Made by Hernando Ivan Teddy - with innovation
 
-## Overview
+## Origin
 
-MCP Web Performance Intelligence is a proof-of-concept observability platform demonstrating autonomous, AI-driven analysis of website performance metrics using the Model Context Protocol (MCP).
+This project started as a Python/Jupyter proof of concept using FastMCP, Gemini
+function calling, and a Google Colab-only setup. That notebook is preserved at
+[`doc/mcp_agent_performance_poc.ipynb`](doc/mcp_agent_performance_poc.ipynb) for
+reference. The `.NET` implementation in this repository is a reverse-engineered,
+production-shaped port: the Python notebook's cells were agent-orchestration specific
+(bound to a particular Gemini model), so the actual **MCP server** — the reusable,
+model-agnostic part — is now a standalone .NET application with full test coverage.
 
-## Repository Contents
+## What Changed From the Python POC
 
-This repository contains:
+- **Standalone MCP server**, not a notebook cell. Runs over stdio like any other MCP
+  server; works with any MCP client, not just a Gemini-specific chat loop.
+- **`suggest_improvements` fully implemented.** The published notebook referenced this
+  tool but never defined it in-notebook (it only existed in an earlier, later-deleted
+  `src/tools.py`). The .NET port restores and implements the full recommendation logic.
+- **Dependency-injected, testable architecture** instead of global notebook state
+  (module-level `mcp`, `model`, `DB_FILE`).
+- **Unit tests** for the analyzer, the SQLite cache, and the recommendation engine —
+  none of which existed before.
 
-- **mcp_agent_performance_poc.ipynb** - Complete proof-of-concept implementation demonstrating the agentic workflow with FastMCP, Gemini integration, and PageSpeed Insights API integration
-- **README.md** - This file
+See [`docs/architecture/C4.md`](docs/architecture/C4.md) for the full C4 diagrams and a
+field-by-field mapping from the original Python modules to their .NET equivalents.
+
+## Repository Layout
+
+```
+src/McpWebPerformanceIntelligence/   The MCP server (.NET 10 console app)
+tests/McpWebPerformanceIntelligence.Tests/   xUnit test suite
+docs/architecture/C4.md              C4 context/container/component diagrams
+doc/mcp_agent_performance_poc.ipynb  Original Python/Gemini proof of concept
+```
 
 ## Features
 
-- **Agentic AI Analysis** - Autonomous agents powered by Gemini that understand and analyze web performance data
-- **FastMCP Integration** - High-performance Model Context Protocol for seamless tool orchestration
-- **PageSpeed Insights** - Direct integration with Google's PageSpeed Insights API for comprehensive performance metrics
-- **SQLite Persistence** - Lightweight, file-based database for persistent context management and historical data
-- **Intelligent Tool Orchestration** - Multi-step agentic workflow with automatic function calling
-- **Two-Step Analysis** - Analyze → Suggest workflow coordinated by the AI agent
+- **Two MCP tools**: `analyze_website` (PageSpeed Insights → metrics) and
+  `suggest_improvements` (cached metrics → prioritized recommendations)
+- **PageSpeed Insights integration** — Performance Score, FCP, Speed Index, LCP, TTI,
+  TBT, CLS
+- **SQLite persistence** (`performance_cache` table) so suggestions don't require a
+  redundant API call
+- **Configurable thresholds** for score/FCP/TTI/TBT via `appsettings.json` or
+  environment variables
 
 ## Getting Started
 
 ### Prerequisites
 
-- Python 3.10+
-- Google Gemini API key
-- Google PageSpeed Insights API key
-- Jupyter Notebook or Google Colab
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
+- A [Google PageSpeed Insights API key](https://developers.google.com/speed/docs/insights/v5/get-started)
 
-### Setup
+### Build & Test
 
-1. Clone the repository:
 ```bash
-git clone https://github.com/ndoteddy/mcp-web-performance-intelligence.git
-cd mcp-web-performance-intelligence
+dotnet restore
+dotnet build
+dotnet test
 ```
 
-2. Open the notebook in Google Colab or Jupyter:
+### Configuration
+
+Set the PageSpeed API key via environment variable (preferred for secrets) or
+`appsettings.json`:
+
 ```bash
-jupyter notebook mcp_agent_performance_poc.ipynb
+export PAGESPEED_API_KEY="your-api-key-here"
+# Optional overrides:
+export DB_FILE="mcp_performance.db"
 ```
 
-3. Add your API credentials:
-   - Store `GOOGLE_API_KEY` in Colab secrets or environment
-   - Store `PAGESPEED_API_KEY` in Colab secrets or environment
+Other thresholds live in `src/McpWebPerformanceIntelligence/appsettings.json` under the
+`Performance` section (`PerformanceScoreThreshold`, `FcpThresholdMs`, `TtiThresholdMs`,
+`TbtThresholdMs`, `ApiTimeoutSeconds`).
 
-### Usage
+### Running the Server
 
-The notebook demonstrates:
+The server speaks MCP over stdio — it's meant to be launched by an MCP client, not run
+interactively on its own.
 
-1. **Environment Setup** - Configure API keys and initialize SQLite database
-2. **Tool Definition** - Register `analyze_website` and `suggest_improvements` with FastMCP
-3. **Agent Orchestration** - Use Gemini with function calling to autonomously sequence tools
-4. **Result Synthesis** - Generate professional technical reports
-
-Run the notebook cells in order to execute the complete performance audit workflow.
-
-## Architecture
-
-### System Flow
-
-```
-User Request
-    ↓
-Gemini Model (Agent Brain)
-    ↓
-  ├─→ analyze_website (FastMCP Tool)
-  │      ↓
-  │   PageSpeed Insights API
-  │      ↓
-  │   SQLite Database (Cache)
-  │
-  └─→ suggest_improvements (FastMCP Tool)
-         ↓
-      Database Retrieval
-         ↓
-      Recommendation Engine
-         ↓
-Professional Technical Report
+```bash
+dotnet run --project src/McpWebPerformanceIntelligence
 ```
 
-### Key Components
+To wire it into an MCP client (e.g. Claude Desktop's `claude_desktop_config.json`),
+point the client at the built executable:
 
-1. **FastMCP Server** - Defines and manages tool schemas
-2. **Gemini Model** - Acts as the orchestrator with function calling
-3. **PageSpeed Analyzer** - Fetches and parses performance metrics
-4. **SQLite Database** - Persists metrics for recommendations
-5. **Recommendation Engine** - Generates prioritized suggestions
+```json
+{
+  "mcpServers": {
+    "web-performance-intelligence": {
+      "command": "dotnet",
+      "args": ["run", "--project", "/absolute/path/to/src/McpWebPerformanceIntelligence"],
+      "env": {
+        "PAGESPEED_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}
+```
 
-## Key Implementation Details
+## Tools
 
-### analyze_website Tool
-- Calls Google PageSpeed Insights V5 API
-- Extracts: Performance Score, FCP, Speed Index, LCP, TTI, TBT, CLS
-- Persists metrics to SQLite for caching
-- Returns JSON metrics for agent processing
+### `analyze_website(url)`
 
-### suggest_improvements Tool
-- Retrieves cached metrics from database
-- Analyzes against performance thresholds
-- Generates 3 prioritized recommendations
-- Includes impact assessment and technical details
+Calls PageSpeed Insights V5, extracts Lighthouse metrics, validates them, and persists
+them to SQLite. Returns JSON:
 
-### Agentic Workflow
-1. User provides URL
-2. Gemini receives instruction to use both tools
-3. Agent autonomously calls `analyze_website`
-4. Agent calls `suggest_improvements` with results
-5. Agent synthesizes findings into professional report
+```json
+{
+  "score": 76.0,
+  "first_contentful_paint": "0.5 s",
+  "speed_index": "0.7 s",
+  "largest_contentful_paint": "0.9 s",
+  "time_to_interactive": "1.9 s",
+  "total_blocking_time": "50 ms",
+  "cumulative_layout_shift": "0.001"
+}
+```
+
+### `suggest_improvements(url)`
+
+Reads cached metrics for `url` (requires `analyze_website` to have run first) and
+returns up to 3 prioritized recommendations plus a status summary:
+
+```json
+{
+  "url": "https://example.com",
+  "recommendations": [
+    {
+      "priority": 1,
+      "category": "Overall Performance",
+      "issue": "Performance score is 42 (threshold: 70)",
+      "recommendation": "Comprehensive performance audit required...",
+      "impact": "High"
+    }
+  ],
+  "metrics_analyzed": { "score": 42, "status": "Needs Improvement" }
+}
+```
 
 ## Performance Thresholds
-
-The system evaluates against these industry standards:
 
 - **Performance Score**: >= 70 is considered good
 - **First Contentful Paint (FCP)**: < 1.8s is ideal
 - **Time to Interactive (TTI)**: < 3.8s is ideal
 - **Total Blocking Time (TBT)**: < 300ms is ideal
 
-## API Integration
+## Architecture
 
-### Google PageSpeed Insights
-- **Endpoint**: `https://www.googleapis.com/pagespeedonline/v5/runPagespeed`
-- **Authentication**: API key in query parameters
-- **Timeout**: 60 seconds
-- **Response**: Lighthouse audit data with performance metrics
+See [`docs/architecture/C4.md`](docs/architecture/C4.md) for:
+- System Context, Container, and Component (C4) diagrams
+- A sequence diagram of the two-step `analyze_website` → `suggest_improvements` flow
+- A table mapping each original Python module to its .NET equivalent
 
-### Google Gemini
-- **Model**: `gemini-2.5-flash-lite`
-- **Features**: Function calling, system instructions, multi-turn chat
-- **Quota Management**: Includes retry logic with exponential backoff
+## Testing
 
-## Database Schema
+`tests/McpWebPerformanceIntelligence.Tests` covers:
+- `RecommendationEngineTests` — threshold logic for score/TBT/TTI, fallback case,
+  boundary conditions
+- `PerformanceAnalyzerTests` — Lighthouse JSON extraction, missing-field handling, HTTP
+  failures, performance status banding (via a fake `HttpMessageHandler`, no live API calls)
+- `SqlitePerformanceRepositoryTests` — insert/get/update/delete/clear round trips
+  against a temp SQLite file
+- `WebPerformanceToolsTests` — the MCP tool methods' success/error JSON contracts,
+  using mocked analyzer/repository dependencies
 
-```sql
-CREATE TABLE performance_cache (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    url TEXT PRIMARY KEY,
-    metrics TEXT,              -- JSON string of performance metrics
-    analysis_summary TEXT,      -- Optional analysis notes
-    updated_at DATETIME
-);
+```bash
+dotnet test
 ```
-
-## Error Handling
-
-- **API Failures**: Graceful error messages returned in JSON
-- **Quota Exhaustion**: Automatic retry with exponential backoff
-- **Invalid Data**: Validation checks on metrics before persistence
-- **Database Errors**: Transaction rollback and logging
 
 ## Future Enhancements
 
-Potential extensions to this proof-of-concept:
-
-1. **Production Backend** - Flask/FastAPI server wrapper
-2. **Web Dashboard** - Real-time performance monitoring UI
-3. **Multi-URL Batch Processing** - Process 100+ URLs automatically
-4. **Historical Trending** - Track performance changes over time
-5. **Custom Thresholds** - User-defined performance targets
-6. **Slack Integration** - Automated audit notifications
-7. **Scheduled Audits** - Periodic performance monitoring
-8. **Advanced Analytics** - ML-driven pattern recognition
-
-## Contributing
-
-Contributions are welcome! Please note that this is a proof-of-concept. For production use, consider:
-
-- Refactoring into modular Python packages
-- Adding comprehensive test coverage
-- Implementing CI/CD pipelines
-- Setting up Docker containerization
-- Adding observability/monitoring
+1. HTTP/SSE MCP transport (`ModelContextProtocol.AspNetCore`) for remote deployment
+2. Historical trending across repeated audits of the same URL
+3. Batch auditing across many URLs
+4. Custom per-client thresholds
 
 ## License
 
@@ -190,13 +197,10 @@ For questions, issues, or suggestions:
 
 ## Acknowledgments
 
-- [FastMCP](https://github.com/jlouis/fastmcp) - High-performance Model Context Protocol
-- [Google Gemini](https://gemini.google.com/) - Advanced AI model with function calling
-- [Google PageSpeed Insights](https://developers.google.com/speed/pagespeed/insights) - Comprehensive performance metrics
-- [SQLite](https://www.sqlite.org/) - Embedded database engine
+- [Model Context Protocol](https://modelcontextprotocol.io/) — the protocol this server implements
+- [Google PageSpeed Insights](https://developers.google.com/speed/pagespeed/insights) — performance metrics source
+- [Microsoft.Data.Sqlite](https://learn.microsoft.com/dotnet/standard/data/sqlite/) — embedded database engine
 
 ---
 
 **Made by Hernando Ivan Teddy - with innovation**
-
-Built to demonstrate enterprise-grade agentic AI workflows for autonomous observability.
